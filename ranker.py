@@ -23,6 +23,79 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 
 
+
+# ============================================================
+# JD-ALIGNMENT PENALTIES
+# Encode the JD's explicit "do not want" signals as score down-weights.
+# We deliberately do NOT add keyword "boosts" for the JD's "want" signals --
+# the BM25 career-relevance score already captures retrieval/ranking DEPTH
+# semantically, and adding keyword-presence boosts would re-introduce the
+# very keyword trap the challenge penalizes. Every rule below maps to an
+# explicit line in the job description.
+# ============================================================
+_SERVICES_INDUSTRIES = {"IT Services", "Consulting"}
+_SERVICES_COMPANIES = {"tcs", "infosys", "wipro", "accenture", "cognizant",
+                       "capgemini", "tech mahindra", "hcl", "ltimindtree"}
+
+
+def jd_penalty_multiplier(cand, now_str="2026-06-30"):
+    """Returns (multiplier in [0.3, 1.0], notes). Down-weights candidates the
+    JD explicitly says are not a fit. Never boosts above 1.0."""
+    mult, notes = 1.0, []
+    profile = cand.get("profile", {}) or {}
+    sig = cand.get("redrob_signals", {}) or {}
+    history = cand.get("career_history", []) or []
+
+    # All-services career (JD: "only worked at consulting firms ... not a fit")
+    if history:
+        all_ind = all(h.get("industry") in _SERVICES_INDUSTRIES for h in history)
+        comps = [(h.get("company", "") or "").lower() for h in history]
+        all_co = bool(comps) and all(any(s in c for s in _SERVICES_COMPANIES) for c in comps)
+        if all_ind or all_co:
+            mult *= 0.45
+            notes.append("all-services career")
+
+    # Non-India, no visa sponsorship (JD: "Outside India ... we don't sponsor visas")
+    country = profile.get("country", "India")
+    if country and country != "India":
+        mult *= 0.55
+        notes.append("non-India (no visa sponsorship)")
+
+    # Job-hopping / title-chasing (JD: "switching companies every 1.5 years ... not a fit")
+    non_cur = [h for h in history if not h.get("is_current")]
+    if len(non_cur) >= 3:
+        avg = sum(h.get("duration_months", 0) or 0 for h in non_cur) / len(non_cur)
+        if avg < 18:
+            mult *= 0.85
+            notes.append("job-hopping")
+
+    # Long notice -- softened (JD: "30+ day notice ... the bar gets higher", not a reject)
+    notice = sig.get("notice_period_days")
+    if isinstance(notice, (int, float)) and notice > 90:
+        mult *= 0.95
+        notes.append("long notice")
+
+    # Availability (JD: "hasn't logged in 6 months + 5% response rate = not available")
+    rr = sig.get("recruiter_response_rate")
+    rr = rr if isinstance(rr, (int, float)) else 1.0
+    la = sig.get("last_active_date")
+    try:
+        di = (datetime.strptime(now_str, "%Y-%m-%d") - datetime.strptime(la, "%Y-%m-%d")).days
+    except Exception:
+        di = 0
+    if rr < 0.15 and di > 90:
+        mult *= 0.5
+        notes.append("unavailable")
+    elif rr < 0.15:
+        mult *= 0.7
+        notes.append("low responsiveness")
+    elif di > 150:
+        mult *= 0.88
+        notes.append("inactive")
+
+    return max(0.3, min(1.0, mult)), notes
+
+
 # ============================================================
 # CONFIG
 # ============================================================
@@ -390,6 +463,8 @@ def rank(candidates, jd_text, config):
         sk = _skill_overlap_score(c, jd_kw) * mult
         hi = score_hireability(c)
         final = w["career_relevance"]*cr + w["production_signal"]*ps + w["trajectory"]*tr + w["skill_match"]*sk + w["hireability"]*hi
+        jd_mult, jd_notes = jd_penalty_multiplier(c)
+        final *= jd_mult
         scored.append({
             "candidate_id": c.get("candidate_id"),
             "score": round(final, 2),

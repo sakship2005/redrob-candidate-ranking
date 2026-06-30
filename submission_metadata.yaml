@@ -3,14 +3,15 @@
 # Fill in the TODO placeholders before submitting.
 # ============================================================
 
-team_name: "Ai Quartet"
+team_name: "AI Quartet"
 challenge: "Redrob Intelligent Candidate Discovery & Ranking Challenge"
 event: "India Runs Hackathon (Hack2Skill)"
 
 submission:
   output_file: "output/team_submission.csv"
   notebook: "notebook/Redrob_Ranker.ipynb"
-  
+  repo: "TODO_GITHUB_REPO_URL"
+  sandbox_demo: "TODO_COLAB_SHARE_LINK"
 
 approach:
   method: "Weighted multi-signal scoring with BM25 retrieval"

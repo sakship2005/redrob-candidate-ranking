@@ -72,6 +72,33 @@ in the config cell and sum to exactly 1.0 (asserted at load time).
   only *genuine impossibilities*; it does **not** drop people merely for not
   listing their early jobs.
 
+### JD-alignment penalties (encoding what the JD explicitly rejects)
+
+The job description is unusually direct about who is **not** a fit. We encode
+those explicit statements as score down-weights — and deliberately do **not** add
+keyword "boosts" for the JD's "want" signals, because the BM25 career-relevance
+score already captures retrieval/ranking *depth* semantically, and keyword-presence
+boosts would re-introduce the very keyword trap the challenge penalizes. Each
+penalty maps to a line in the JD:
+
+- **All-services careers** — candidates whose entire history is at IT-services /
+  consulting firms (TCS, Infosys, Wipro, Accenture, Cognizant, Capgemini, …) with
+  no product-company experience. (JD: "only worked at consulting firms … not a fit.")
+- **Availability** — candidates who haven't logged in for months *and* barely
+  respond to recruiters are, for hiring purposes, not actually available, and are
+  strongly down-weighted. (JD: "hasn't logged in for 6 months and has a 5% response
+  rate is … not actually available. Down-weight them.")
+- **Non-India without visa sponsorship** — (JD: "Outside India: case-by-case, but
+  we don't sponsor work visas.")
+- **Title-chasing / job-hopping** — switching companies roughly every 1.5 years.
+  (JD: "switching companies every 1.5 years … we're not a fit.")
+- **Long notice period** — softened, not a reject. (JD: "30+ day notice … the bar
+  gets higher.")
+
+Penalties only ever *reduce* a score (multiplier capped at ≤ 1.0); they never
+inflate one. This keeps the core ranking driven by demonstrated capability, with
+the JD's hard "do-not-want" signals applied as a disciplined filter on top.
+
 ---
 
 ## Why BM25 (and not embeddings)
