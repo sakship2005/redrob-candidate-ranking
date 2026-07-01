@@ -168,6 +168,9 @@ def load_candidates(path):
 
 
 def load_jd(path):
+    if path.endswith(".docx"):
+        import docx
+        return "\n".join(p.text for p in docx.Document(path).paragraphs if p.text.strip())
     base = (path[:-3] if path.endswith(".gz") else path).lower()
     with _open_path(path) as f:
         text = f.read()
@@ -326,12 +329,17 @@ def _consistency_multiplier(cand, config):
 
 def score_hireability(cand):
     sig = cand.get("redrob_signals", {}) or {}
-    comp = {"recruiter_response_rate": 0.40, "interview_completion_rate": 0.35, "offer_acceptance_rate": 0.25}
+    comp = {
+        "recruiter_response_rate": 0.35,
+        "interview_completion_rate": 0.30,
+        "offer_acceptance_rate": 0.20,
+        "github_activity_score": 0.15,   # added
+    }
     wsum, wused = 0.0, 0.0
     for f, w in comp.items():
         v = sig.get(f)
-        if isinstance(v, (int, float)):
-            wsum += v * 100.0 * w
+        if isinstance(v, (int, float)) and v >= 0:  # v>=0 excludes -1 sentinel
+            wsum += v * 100.0 * w if f != "github_activity_score" else v * w
             wused += w
     return 50.0 if wused == 0 else wsum / wused
 
@@ -392,7 +400,8 @@ def _skill_overlap_score(cand, jd_kw):
     summary = (cand.get("profile", {}) or {}).get("summary", "") or ""
     text = (summary + " " + " ".join(s.get("name", "") for s in (cand.get("skills", []) or []))).lower()
     ck = set(re.findall(r"[a-zA-Z][a-zA-Z+#.]{2,}", text))
-    return float(min(100.0, len(ck & jd_kw) / 6.0 * 100.0)) if jd_kw else 0.0
+    overlap = len(ck & jd_kw)
+    return float(min(100.0, overlap / 25.0 * 100.0)) if jd_kw else 0.0
 
 
 def _percentile_normalize(scores):
@@ -403,26 +412,61 @@ def _percentile_normalize(scores):
 
 def _build_reasoning(cand, cr, ps, tr, penalties):
     p = cand.get("profile", {}) or {}
-    years, title = p.get("years_of_experience"), p.get("current_title", "")
+    years   = p.get("years_of_experience")
+    title   = p.get("current_title", "") or ""
+    company = p.get("current_company", "") or ""
+    sig     = cand.get("redrob_signals", {}) or {}
+    notice  = sig.get("notice_period_days")
+    github  = sig.get("github_activity_score", -1)
+    skills  = cand.get("skills", []) or []
+    top_skill = next((s.get("name") for s in sorted(
+        skills, key=lambda x: x.get("duration_months", 0) or 0, reverse=True
+    ) if s.get("name")), None)
+
     parts = []
-    if years is not None and title:
+
+    # line 1 — specific facts about this candidate
+    if years is not None and title and company:
+        parts.append(f"{years:.0f}y exp, currently {title} at {company}")
+    elif years is not None and title:
         parts.append(f"{years:.0f}y exp, currently {title}")
     elif title:
         parts.append(f"currently {title}")
-    parts.append("strong role-fit to the JD" if cr >= 60 else "moderate role-fit" if cr >= 40 else "limited role-fit (background differs from the role)")
+
+    # line 2 — role fit
+    if cr >= 60:
+        parts.append("strong role-fit to the JD")
+    elif cr >= 40:
+        parts.append("moderate role-fit")
+    else:
+        parts.append("limited role-fit (background differs from role)")
+
+    # line 3 — production signal
     if ps >= 65:
         parts.append("clear production ownership")
     elif ps <= 35:
-        parts.append("mostly supporting/exposure-level work")
+        parts.append("mostly exposure-level work, limited ownership signals")
+
+    # line 4 — trajectory
     if tr >= 70:
         parts.append("upward trajectory")
     elif tr <= 35:
         parts.append("flat trajectory")
+
+    # line 5 — specific differentiating facts
+    if top_skill:
+        parts.append(f"strongest skill: {top_skill}")
+    if github is not None and github >= 40:
+        parts.append(f"active GitHub contributor (score {github:.0f})")
+    if notice is not None and notice <= 30:
+        parts.append(f"available quickly ({notice}d notice)")
+    elif notice is not None and notice > 90:
+        parts.append(f"long notice period ({notice}d)")
     if penalties:
         parts.append("self-rated skills exceed measured assessments")
-    r = "; ".join(parts)
-    return r[0].upper() + r[1:] if r else "Scored on available signals."
 
+    r = "; ".join(parts)
+    return (r[0].upper() + r[1:]) if r else "Scored on available signals."
 
 # ============================================================
 # PIPELINE
